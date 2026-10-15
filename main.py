@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # -----------------------------------------------------------------------------
-# 1. 페이지 기본 설정 및 디자인 (따뜻하고 직관적인 구성)
+# 1. 페이지 기본 설정 및 디자인
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="동네별 인구 피라미드",
@@ -12,17 +12,17 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 불러오기 함수 (캐싱을 적용하여 데이터 로딩 속도 최적화)
+# 2. 데이터 불러오기 함수 (캐싱 적용으로 로딩 속도 향상)
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_data():
     # 데이터셋 URL (ZIP 압축 파일 형태의 CSV)
     url = "https://raw.githubusercontent.com/koloramax-goedu/seowonhs-data/main/population_ts_yearly_gender.zip"
     
-    # 판다스 read_csv는 zip 파일 안의 csv를 자동으로 감지해서 불러옵니다.
+    # 판다스로 CSV 데이터 읽어오기
     df = pd.read_csv(url)
     
-    # 데이터셋 내 가장 최신 연도를 자동으로 파악 후 최신 연도 데이터만 필터링
+    # 데이터셋 내 가장 최신 연도 추출 및 필터링
     latest_year = int(df['연도'].max())
     df_latest = df[df['연도'] == latest_year].copy()
     
@@ -36,14 +36,14 @@ except Exception as e:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 3. 메인 화면 타이틀 영역
+# 3. 메인 화면 타이틀
 # -----------------------------------------------------------------------------
 st.title("🏘️ 우리 동네 인구 피라미드")
 st.markdown(f"**{latest_year}년 최신 데이터**를 기준으로 지역별 연령 및 성별 인구 구조를 살펴봅니다. ☀️")
 st.divider()
 
 # -----------------------------------------------------------------------------
-# 4. 상단 드롭다운 3개 (시·도 ➔ 시·군·구 ➔ 읍·면·동 릴레이 선택)
+# 4. 상단 드롭다운 3개 (시·도 ➔ 시·군·구 ➔ 읍·면·동 선택)
 # -----------------------------------------------------------------------------
 st.subheader("📍 지역 선택")
 col1, col2, col3 = st.columns(3)
@@ -66,44 +66,86 @@ with col3:
     selected_dong = st.selectbox("3. 읍·면·동 선택", dong_list)
 
 # -----------------------------------------------------------------------------
-# 5. 선택한 지역 데이터 처리 및 나이순 컬럼 정렬
+# 5. 선택한 지역 데이터 연산 (인구수, 평균연령, 고령화율)
 # -----------------------------------------------------------------------------
 # 최종 선택된 동의 데이터 필터링
 target_df = filtered_sigungu_df[filtered_sigungu_df['동'] == selected_dong]
 
-# 컬럼명에서 숫자(나이)만 추출하여 0세부터 100세 이상까지 올바른 순서로 정렬하는 키 함수
-def get_age_key(col_name):
+# 컬럼명에서 숫자(나이)만 추출하는 함수
+def get_age_num(col_name):
     clean_str = col_name.replace('남_', '').replace('여_', '').replace('세', '').replace(' 이상', '').strip()
     try:
         return int(clean_str)
     except ValueError:
-        return 999
+        return 0
 
 # '남_'으로 시작하는 컬럼을 나이 순서대로 정렬 (0세 -> 100세 이상)
-male_cols = sorted([col for col in df.columns if col.startswith('남_')], key=get_age_key)
-# 해당 남자 컬럼에 대응하는 여자 컬럼 리스트 생성
+male_cols = sorted([col for col in df.columns if col.startswith('남_')], key=get_age_num)
 female_cols = [col.replace('남_', '여_') for col in male_cols]
-# Y축 표시용 나이 라벨 리스트 생성 ('0세', '1세', ..., '100세 이상')
 age_labels = [col.replace('남_', '') for col in male_cols]
+age_numbers = [get_age_num(col) for col in male_cols]
 
-# 선택 지역의 남/여 인구 수 추출 (여러 행일 경우 대비해 sum 처리)
+# 선택 지역의 남/여 인구 수 수집
 male_values = target_df[male_cols].sum().values
 female_values = target_df[female_cols].sum().values
+total_values = male_values + female_values
+
+# ① 총인구
+total_pop = int(total_values.sum())
+
+# ② 평균연령 (가중평균 계산)
+if total_pop > 0:
+    weighted_age_sum = sum(pop * age for pop, age in zip(total_values, age_numbers))
+    avg_age = weighted_age_sum / total_pop
+else:
+    avg_age = 0.0
+
+# ③ 유소년(0~14세) 및 고령인구(65세 이상)
+youth_pop = sum(pop for pop, age in zip(total_values, age_numbers) if age <= 14)
+elderly_pop = sum(pop for pop, age in zip(total_values, age_numbers) if age >= 65)
+
+# 고령화율 (%)
+elderly_rate = (elderly_pop / total_pop * 100) if total_pop > 0 else 0.0
+# 유소년 비율 (%)
+youth_rate = (youth_pop / total_pop * 100) if total_pop > 0 else 0.0
 
 # -----------------------------------------------------------------------------
-# 6. 요약 인구 카드 (총 인구, 남성, 여성)
+# 6. 상단 지표 카드 3개 (총인구, 평균연령, 고령화율)
 # -----------------------------------------------------------------------------
-total_male = int(male_values.sum())
-total_female = int(female_values.sum())
-total_pop = total_male + total_female
-
 st.markdown("<br>", unsafe_allow_html=True)
-st.markdown(f"### 📊 **{selected_sido} {selected_sigungu} {selected_dong}** 인구 수치")
+st.markdown(f"### 📊 **{selected_sido} {selected_sigungu} {selected_dong}** 주요 지표")
 
-m_col1, m_col2, m_col3 = st.columns(3)
-m_col1.metric("총 인구", f"{total_pop:,} 명")
-m_col2.metric("남성 인구", f"{total_male:,} 명")
-m_col3.metric("여성 인구", f"{total_female:,} 명")
+card_col1, card_col2, card_col3 = st.columns(3)
+
+# 지표 카드 1: 총인구
+card_col1.metric(
+    label="👥 총인구",
+    value=f"{total_pop:,} 명"
+)
+
+# 지표 카드 2: 평균연령
+card_col2.metric(
+    label="🎂 평균연령",
+    value=f"{avg_age:.1f} 세"
+)
+
+# 지표 카드 3: 고령화율 (20% 이상일 경우 주의 표시)
+if elderly_rate >= 20.0:
+    card_col3.metric(
+        label="👵 고령화율 (65세 이상)",
+        value=f"{elderly_rate:.1f}%",
+        delta="⚠️ 초고령사회 (20% 이상)",
+        delta_color="inverse"
+    )
+else:
+    card_col3.metric(
+        label="👵 고령화율 (65세 이상)",
+        value=f"{elderly_rate:.1f}%"
+    )
+
+# 고령화율 20% 초과 시 추가 주의 메시지 배너 표시
+if elderly_rate >= 20.0:
+    st.warning(f"⚠️ **주의:** **{selected_dong}**은(는) 65세 이상 인구 비율이 **{elderly_rate:.1f}%**로 **초고령사회 기준(20% 이상)**을 넘었습니다.")
 
 st.divider()
 
@@ -116,29 +158,29 @@ male_neg_values = [-val for val in male_values]
 
 fig = go.Figure()
 
-# 남자 데이터 막대 (왼쪽 방향)
+# 남자 데이터 막대 (왼쪽)
 fig.add_trace(go.Bar(
     y=age_labels,
     x=male_neg_values,
     name='남성',
     orientation='h',
-    marker_color='#4A90E2',   # 차분하고 따뜻한 파란색
-    customdata=male_values,    # 마우스 오버(툴팁) 시 양수로 보여주기 위한 실제 값
+    marker_color='#4A90E2',   # 차분한 푸른색
+    customdata=male_values,    # 툴팁에 표시할 양수 실제 값
     hovertemplate='<b>%{y}</b><br>남성 인구: %{customdata:,}명<extra></extra>'
 ))
 
-# 여자 데이터 막대 (오른쪽 방향)
+# 여자 데이터 막대 (오른쪽)
 fig.add_trace(go.Bar(
     y=age_labels,
     x=female_values,
     name='여성',
     orientation='h',
-    marker_color='#FF6B6B',   # 따뜻한 분홍/코랄색
+    marker_color='#FF6B6B',   # 따뜻한 분홍색
     customdata=female_values,
     hovertemplate='<b>%{y}</b><br>여성 인구: %{customdata:,}명<extra></extra>'
 ))
 
-# X축 눈금 설정 (음수로 입력된 남성 인구 표기를 양수 눈금 레이블로 보정)
+# X축 눈금 설정 (음수 값을 양수 레이블로 보정)
 max_val = max(max(male_values, default=0), max(female_values, default=0))
 if max_val == 0:
     max_val = 100
@@ -149,9 +191,8 @@ tick_text = [f"{abs(v):,}" for v in tick_vals]
 
 # -----------------------------------------------------------------------------
 # 축 레이아웃 고정 설정
-# - autorange='reversed' 나 값 크기순 정렬 옵션(total ascending 등)은 일체 사용하지 않음
-# - categoryorder='array'와 categoryarray=age_labels를 사용하여
-#   맨 아래 눈금이 '0세', 맨 위 눈금이 '100세 이상'으로 순서가 고정됨
+# - categoryorder='array' 및 categoryarray=age_labels를 설정하여
+#   0세가 맨 아래, 100세 이상이 맨 위에 위치하도록 순서 고정
 # -----------------------------------------------------------------------------
 fig.update_layout(
     title=dict(
@@ -171,11 +212,11 @@ fig.update_layout(
         title="나이",
         type='category',
         categoryorder='array',
-        categoryarray=age_labels  # '0세'가 맨 아래(0번 index position), '100세 이상'이 맨 위에 배치
+        categoryarray=age_labels  # '0세'가 맨 아래, '100세 이상'이 맨 위에 배치
     ),
     barmode='relative',
     bargap=0.1,
-    height=850,  # 0세~100세 이상이 쾌적하게 보이도록 충분한 높이 확보
+    height=850,
     legend=dict(
         orientation="h",
         yanchor="bottom",
@@ -186,5 +227,29 @@ fig.update_layout(
     margin=dict(l=60, r=40, t=80, b=40)
 )
 
-# Streamlit 화면에 Plotly 차트 출력
+# Plotly 그래프 화면 출력
 st.plotly_chart(fig, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# 8. 피라미드 하단 자동 한 줄 설명
+# -----------------------------------------------------------------------------
+st.subheader("❓ 이 동네는 아이가 많은 편인가요, 어르신이 많은 편인가요?")
+
+# 아이(0~14세) 비율 vs 어르신(65세 이상) 비율 비교 및 자동 문구 생성
+if youth_rate > elderly_rate:
+    insight_text = (
+        f"💡 **분석 결과:** **{selected_dong}**은(는) 유소년 인구(0~14세) 비율이 **{youth_rate:.1f}%**로 "
+        f"고령 인구(65세 이상, **{elderly_rate:.1f}%**)보다 높아 **아이가 상대적으로 많은 젊은 동네**입니다. 🎈"
+    )
+elif elderly_rate > youth_rate:
+    insight_text = (
+        f"💡 **분석 결과:** **{selected_dong}**은(는) 고령 인구(65세 이상) 비율이 **{elderly_rate:.1f}%**로 "
+        f"유소년 인구(0~14세, **{youth_rate:.1f}%**)보다 높아 **어르신이 상대적으로 많은 동네**입니다. 🍵"
+    )
+else:
+    insight_text = (
+        f"💡 **분석 결과:** **{selected_dong}**은(는) 유소년 인구(**{youth_rate:.1f}%**)와 "
+        f"고령 인구(**{elderly_rate:.1f}%**)의 비율이 서로 비슷한 균형적인 동네입니다. ⚖️"
+    )
+
+st.info(insight_text)
